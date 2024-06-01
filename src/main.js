@@ -7,6 +7,7 @@ if ( WebGL.isWebGLAvailable() ) {
     const frameSize = 128;
     const lastFrame = 2155;
     const offset = 63.5;
+    const retryCount = 10;
     let animateId = null;
 
     const canvas = document.querySelector("canvas.webgl");
@@ -16,7 +17,7 @@ if ( WebGL.isWebGLAvailable() ) {
         currFrame: 1,
         isPlay: false,
         onClickPrevious: async () => {
-            if (uiOption.currFrame > 0) {
+            if (uiOption.currFrame > 1) {
                 uiOption.currFrame--;
                 await updateFrame(uiOption.currFrame);
             }        
@@ -54,8 +55,28 @@ if ( WebGL.isWebGLAvailable() ) {
     .name("Next");
 
     const getSurfaceById = async (id) => {
-        const res = await fetch(`${import.meta.env.VITE_API_HOST}/hlist/getSurfaceById/${id}`);
-        return await res.json();
+        const sleep = (ms) => {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        };
+
+        let count = 0;
+        try {
+            const res = await fetch(`${import.meta.env.VITE_API_HOST}/hlist/getSurfaceById/${id}`);
+            return await res.json();
+        } catch(err) {
+            while (count < retryCount) {
+                console.log(`Retry ${count + 1} time.`);
+                await sleep(5000);
+                try {
+                    const res = await fetch(`${import.meta.env.VITE_API_HOST}/hlist/getSurfaceById/${id}`);
+                    return await res.json();
+                } catch (err) {
+                    count++;
+                }
+            }            
+        }
+        
+        throw new Error("Fail to connect API.");
     };
 
     const updateFrame = async (surfaceId) => {
