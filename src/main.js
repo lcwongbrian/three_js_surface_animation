@@ -6,9 +6,19 @@ import GUI from 'lil-gui';
 if ( WebGL.isWebGLAvailable() ) {
     const frameSize = 128;
     const lastFrame = 2155;
-    const offset = 63.5;
+    const posOffset = 63.5;
+    const rOffset = 0.01;
+    const gOffset = 0.01;
+    const bOffset = 0.15;
     const retryCount = 10;
+    const min = 61;
+    const max = 72;
     let animateId = null;
+    let indexCnt = 0;
+    const verticesMatrix = new Float32Array(frameSize * frameSize * 3);
+    const indexMatrix = new Uint16Array((frameSize - 1) * (frameSize - 1) * 6);
+    const colorMatrix = new Float32Array(frameSize * frameSize * 3);
+    const color = new THREE.Color();    
 
     const canvas = document.querySelector("canvas.webgl");
 
@@ -80,60 +90,34 @@ if ( WebGL.isWebGLAvailable() ) {
     };
 
     const updateFrame = async (surfaceId) => {
-        const frame = await getFrame(surfaceId);
-        let positionMatrix = geometry.attributes.position.array;
-        let colorMatrix = geometry.attributes.color.array;
+        const data = await getSurfaceById(surfaceId);
+        let positionAttr = geometry.attributes.position.array;
+        let colorAttr = geometry.attributes.color.array;
 
-        frame.vertices.forEach((coord, i) => {
-            positionMatrix[i] = coord;
-        });
-        frame.colorMap.forEach((color, i) => {
-            colorMatrix[i] = color;
-        });
+        if (data?.surface_id && data?.vertices?.length > 0) {
+            const frame = data.vertices;
+            for (let i = 0; i < frame.length; i++) {
+                for (let j = 0; j < frame[i].length; j++) {
+                    const idx = i * frameSize + j;
+                    const vertexIdx = 3 * idx;
+                    const hRatio = (frame[i][j] - min) / (max - min);
+                    const r = hRatio * (1 - rOffset) + rOffset;
+                    const g = hRatio * (1 - gOffset) + gOffset;
+                    const b = bOffset - hRatio * bOffset;
+    
+                    positionAttr[vertexIdx + 2] = frame[i][j] - min;                
+        
+                    color.setRGB(r, g, b, THREE.SRGBColorSpace);
+                    colorAttr[vertexIdx] = color.r;
+                    colorAttr[vertexIdx + 1] = color.g;
+                    colorAttr[vertexIdx + 2] = color.b;
+                }
+            }
+        }
+        
         geometry.attributes.position.needsUpdate = true;
         geometry.attributes.color.needsUpdate = true;
         renderer.render(scene, camera);
-    };
-
-    const getFrame = async (surfaceId) => {
-        const color = new THREE.Color();
-        let result = {
-            vertices: [],
-            colorMap: []
-        };
-        const data = await getSurfaceById(surfaceId);
-
-        if (data && data.surface_id && data.vertices?.length > 0) {
-            const min = 61;
-            const max = 72;
-            data.vertices.forEach((row, j) => {
-                row.forEach((vertex, i) => {
-                    result.vertices.push(i - offset, j - offset, vertex - 60);
-                    const hRatio = (vertex - min) / (max - min);
-                    const r = hRatio * 0.99 + 0.01;
-                    const g = hRatio * 0.5;
-                    const b = hRatio * 0.1;
-                    color.setRGB(r, g, b, THREE.SRGBColorSpace);
-                    result.colorMap.push(color.r, color.g, color.b);
-                });
-            });
-        }
-        return result;
-    };
-
-    const getMeshIdx = () => {
-        let result = [];
-        for (let i = 0; i < frameSize * (frameSize - 1); i += frameSize) {
-            for (let j = i; j < i + frameSize - 1; j++) {
-                const v1 = j;
-                const v2 = j + 1;
-                const v3 = j + 1 + frameSize;
-                const v4 = j + frameSize
-                result.push(v1, v2, v3);
-                result.push(v3, v4, v1);
-            }
-        }
-        return result;
     };
 
     const playFrame = () => {
@@ -163,22 +147,37 @@ if ( WebGL.isWebGLAvailable() ) {
         renderer.render(scene, camera);
     }
 
-    const init = async () => {        
-        const frame = await getFrame(uiOption.currFrame);
-        geometry.setIndex(getMeshIdx());
-        geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(frame.vertices), 3));
-        geometry.setAttribute('color', new THREE.Float32BufferAttribute(frame.colorMap, 3));
-        geometry.computeVertexNormals();
+    // Initiate matrices
 
-        const material = new THREE.MeshLambertMaterial({
-            vertexColors: true,
-            side: THREE.DoubleSide
-        });
-        const mesh = new THREE.Mesh(geometry, material);
-        scene.add(mesh);
+    for (let i = 0; i < frameSize; i++) {
+        for (let j = 0; j < frameSize; j++) {
+            const idx = i * frameSize + j;
+            const vertexIdx = 3 * idx;
+            
+            verticesMatrix[vertexIdx] = i - posOffset;
+            verticesMatrix[vertexIdx + 1] = j - posOffset;
+            verticesMatrix[vertexIdx + 2] = 0;
 
-        renderer.render(scene, camera);
-    };
+            color.setRGB(rOffset, gOffset, bOffset, THREE.SRGBColorSpace);
+            colorMatrix[vertexIdx] = color.r;
+            colorMatrix[vertexIdx + 1] = color.g;
+            colorMatrix[vertexIdx + 2] = color.b;
+
+            if (i < frameSize - 1 && j < frameSize - 1) {
+                const v1 = idx;
+                const v2 = idx + 1;
+                const v3 = idx + 1 + frameSize;
+                const v4 = idx + frameSize;
+                indexMatrix[indexCnt] = v1;
+                indexMatrix[indexCnt + 1] = v2;
+                indexMatrix[indexCnt + 2] = v3;
+                indexMatrix[indexCnt + 3] = v3;
+                indexMatrix[indexCnt + 4] = v4;
+                indexMatrix[indexCnt + 5] = v1;
+                indexCnt += 6;
+            }
+        }
+    }
 
 	const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -196,24 +195,27 @@ if ( WebGL.isWebGLAvailable() ) {
     orbit.maxDistance = 300;
     orbit.maxPolarAngle = Math.PI;
 
-    // Lights
+    // Light
     const light = new THREE.HemisphereLight();
     light.intensity = 3.5;
-    // const light = new THREE.DirectionalLight(0xffffff, 3.5);
-    // light.position.set(0, 0, 100);
-    // light.target.position.set(0, 0, 0);
-    // light.castShadow = true;
-    // light.shadow.mapSize.width = 512;
-    // light.shadow.mapSize.height = 512;
-    // light.shadow.camera.near = 0.1;
-    // light.shadow.camera.far = 100;
-    // light.shadow.camera.left = -75;
-    // light.shadow.camera.right = 75;
-    // light.shadow.camera.top = 75;
-    // light.shadow.camera.bottom = -75;
     scene.add(light);
 
-    init();
+    // Geometry
+    geometry.setIndex(new THREE.BufferAttribute(indexMatrix, 1));
+    geometry.setAttribute('position', new THREE.BufferAttribute(verticesMatrix, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colorMatrix, 3));
+    geometry.computeVertexNormals();
+
+    const material = new THREE.MeshLambertMaterial({
+        vertexColors: true,
+        side: THREE.DoubleSide
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
+
+    // renderer.render(scene, camera);
+    updateFrame(uiOption.currFrame);
+
     animate();
     
     window.addEventListener('resize', () => {
